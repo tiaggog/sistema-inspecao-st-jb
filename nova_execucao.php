@@ -233,7 +233,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $cid && isset($_POST['salvar_execuc
                     $respostasSalvas[$itemId]['recomendacao'] ?? '',
                     $item['base_legal'],
                     $resultado,
-                    $respostasSalvas[$itemId]['grau_risco'] ?? 'Aceitável',
+                    $respostasSalvas[$itemId]['grau_risco'] ?? 'Médio',
                     $statusItem,
                     $fotoCaminho
                 ]);

@@ -60,4 +60,5 @@ PHP 8 (PDO) · MySQL / MariaDB · HTML · CSS · JavaScript
 1. Copie o projeto para a pasta do servidor (ex.: `C:\xampp\htdocs\sistema_inspecao_st_jb`).
 2. Crie o banco `seguranca_checklist` no MySQL.
 3. Copie `.env.example` para `.env` e ajuste as credenciais do banco.
-4. Acesse `http://localhost/sistema_inspecao_st_jb/login.php`.
+4. Em bancos criados antes da migração, execute os scripts da pasta `database/` em ordem.
+5. Acesse `http://localhost/sistema_inspecao_st_jb/login.php`.

@@ -6,7 +6,7 @@
  *
  * GET  id:      id do checklist (obrigatório)
  * GET  editar:  id do item a carregar no formulário para edição (opcional)
- * POST item_id (0 = novo item), titulo, setor_local, ordem
+ * POST item_id (0 = novo item), titulo, setor_local, base_legal, ordem
  *
  * Fluxo: carrega o checklist pai, opcionalmente o item em edição, processa a
  * inserção/atualização e redireciona (Post/Redirect/Get); por fim lista os
@@ -43,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $itemId = (int)($_POST['item_id'] ?? 0);
     $titulo = trim($_POST['titulo'] ?? '');
     $setorLocal = trim($_POST['setor_local'] ?? '');
-    // Observação: o formulário atual não envia "base_legal", portanto o campo é gravado vazio
+    // Norma de referência do item (ex.: NR-24); é copiada para as respostas de cada inspeção
     $baseLegal = trim($_POST['base_legal'] ?? '');
     $ordem = (int)($_POST['ordem'] ?? 1);
 
@@ -106,7 +106,7 @@ body { margin: 0; background: #f8fafc; color: #1e293b; font-family: Arial, Helve
 
 .grid-form {
     display: grid;
-    grid-template-columns: 2fr 2fr 100px 180px;
+    grid-template-columns: 2fr 1.5fr 1.5fr 100px 180px;
     gap: 12px;
     align-items: end;
 }
@@ -249,6 +249,11 @@ body { margin: 0; background: #f8fafc; color: #1e293b; font-family: Arial, Helve
                 <div class="campo-form">
                     <label>Setor / Local</label>
                     <input name="setor_local" value="<?= e($itemEdit['setor_local'] ?? '') ?>" placeholder="Ex.: Organização e Limpeza">
+                </div>
+
+                <div class="campo-form">
+                    <label>Base Legal</label>
+                    <input name="base_legal" value="<?= e($itemEdit['base_legal'] ?? '') ?>" placeholder="Ex.: NR-24">
                 </div>
 
                 <div class="campo-form">
