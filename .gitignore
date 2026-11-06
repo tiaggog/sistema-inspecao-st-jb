@@ -1,0 +1,15 @@
+# Credenciais / configuração local
+.env
+
+# Arquivos enviados pelos usuários
+uploads/*
+!uploads/.gitkeep
+
+# Sistema / editores
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
+
+# Dump do banco
+banco.sql

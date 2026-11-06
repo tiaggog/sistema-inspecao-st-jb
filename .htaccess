@@ -1,0 +1,6 @@
+# Impede o download ou visualização direta do arquivo .env via navegador
+<Files ".env">
+    Order allow,deny
+    Deny from all
+    Require all denied
+</Files>
