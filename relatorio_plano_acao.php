@@ -1,9 +1,23 @@
 <?php
+/**
+ * Relatório imprimível do Plano de Ação de uma inspeção (versão para PDF).
+ *
+ * Acesso: requer login (qualquer perfil); página apenas de leitura.
+ *
+ * Parâmetros GET:
+ *   - id : ID da execução (inspeção) cujo plano será impresso
+ *
+ * Fluxo: carrega a inspeção com os metadados do documento (código e data de
+ * aprovação do checklist), lista as NCs com ação corretiva, risco, responsável,
+ * prazo e foto de evidência, e usa CSS de impressão para gerar o PDF pelo navegador.
+ */
 require_once 'config.php';
 exigirLogin();
 
 $execId = (int)($_GET['id'] ?? 0);
 
+// --- Dados da inspeção e do documento ---
+// codigo_documento e data_aprovacao alimentam o rodapé padronizado do formulário.
 $stmt = $pdo->prepare("
     SELECT 
         e.*, 
@@ -21,6 +35,8 @@ if (!$inspecao) {
     die('Inspeção não encontrada.');
 }
 
+// --- Não conformidades da inspeção ---
+// Somente respostas NC entram no plano; a ordem segue a sequência de registro.
 $stmtNC = $pdo->prepare("
     SELECT r.*, i.ordem, i.titulo AS item_titulo, i.setor_local AS item_setor
     FROM respostas_checklist r
@@ -31,6 +47,7 @@ $stmtNC = $pdo->prepare("
 $stmtNC->execute([$execId]);
 $itensNC = $stmtNC->fetchAll(PDO::FETCH_ASSOC);
 
+// Data de aprovação do modelo formatada para o rodapé (dd/mm/aaaa).
 $dataAprovacaoDoc = !empty($inspecao['data_aprovacao']) ? date('d/m/Y', strtotime($inspecao['data_aprovacao'])) : 'Não informada';
 ?>
 <!doctype html>

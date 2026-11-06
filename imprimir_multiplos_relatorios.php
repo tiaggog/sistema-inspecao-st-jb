@@ -1,5 +1,21 @@
 <?php
 require_once 'config.php';
+/**
+ * Impressão em lote dos planos de ação: reúne as não conformidades (NC) de
+ * várias inspeções em um único documento, pronto para impressão / PDF.
+ *
+ * Acesso: requer usuário autenticado (qualquer perfil). Chamado a partir
+ * da listagem de planos de ação (planos_acao.php).
+ *
+ * Parâmetros GET:
+ *   - ids : IDs das execuções de checklist, como array (ids[]=1&ids[]=2)
+ *           ou string separada por vírgula (ids=1,2)
+ *
+ * Fluxo: valida os IDs; carrega as inspeções selecionadas; para cada uma,
+ * busca os itens NC e renderiza uma tabela por área (ação corretiva, risco,
+ * responsável, prazo e foto). Cabeçalho e dados gerais aparecem só uma vez,
+ * no início, e assinatura/rodapé só ao final do documento.
+ */
 exigirLogin();
 
 $ids = $_GET['ids'] ?? [];
@@ -9,16 +25,19 @@ if (!is_array($ids)) {
     $ids = explode(',', (string)$ids);
 }
 
-// Sanitiza e reindexa a array de inteiros
+// Converte para inteiros, descarta valores inválidos (que viram 0) e reindexa,
+// pois o execute() com placeholders posicionais exige índices sequenciais
 $idsLimpos = array_values(array_filter(array_map('intval', $ids)));
 
 if (empty($idsLimpos)) {
     die('<div style="font-family:sans-serif; padding:40px; text-align:center; color:#dc2626;"><h2>Nenhum plano de ação selecionado.</h2><a href="planos_acao.php">Voltar</a></div>');
 }
 
+// Um placeholder "?" por ID para montar o IN (...) de forma segura
 $inQuery = implode(',', array_fill(0, count($idsLimpos), '?'));
 
-// Busca todas as inspeções selecionadas
+// Busca todas as inspeções selecionadas. LEFT JOIN para não perder inspeções
+// cujo modelo de checklist ou usuário tenha sido excluído.
 $stmt = $pdo->prepare("
     SELECT 
         e.*, 
@@ -39,6 +58,8 @@ if (empty($inspecoes)) {
     die('<div style="font-family:sans-serif; padding:40px; text-align:center; color:#dc2626;"><h2>Registros não encontrados.</h2><a href="planos_acao.php">Voltar</a></div>');
 }
 
+// Cabeçalho e rodapé do documento usam os dados da primeira inspeção
+// (a mais recente, pela ordenação da consulta).
 $totalInspecoes = count($inspecoes);
 $primeiraInspecao = $inspecoes[0];
 $dataAprovacaoDoc = !empty($primeiraInspecao['data_aprovacao']) ? date('d/m/Y', strtotime($primeiraInspecao['data_aprovacao'])) : 'Não informada';
@@ -259,7 +280,8 @@ body { margin: 0; padding: 20px; background: #e2e8f0; font-family: Arial, Helvet
         <?php
             $execId = $inspecao['id'];
             
-            // Busca os itens com Não Conformidade (NC)
+            // Busca os itens com Não Conformidade (NC) desta inspeção.
+            // Uma consulta por inspeção é aceitável aqui: o lote é escolhido manualmente.
             $stmtNC = $pdo->prepare("
                 SELECT r.*, i.ordem, i.titulo AS item_titulo, i.setor_local AS item_setor
                 FROM respostas_checklist r
@@ -270,6 +292,7 @@ body { margin: 0; padding: 20px; background: #e2e8f0; font-family: Arial, Helvet
             $stmtNC->execute([$execId]);
             $itensNC = $stmtNC->fetchAll(PDO::FETCH_ASSOC);
 
+            // Sem responsável informado, assume o usuário que registrou a inspeção.
             $responsavelNome = $inspecao['responsavel_inspecao'] ?: ($inspecao['usuario_nome'] ?? 'Não informado');
             $nomeArea = $inspecao['area_inspecionada'] ?: 'ÁREA NÃO INFORMADA';
         ?>
@@ -340,7 +363,7 @@ body { margin: 0; padding: 20px; background: #e2e8f0; font-family: Arial, Helvet
                     </tr>
                 <?php else: ?>
                     <?php foreach ($itensNC as $nc): ?>
-                        <?php $titulo = $nc['titulo_nao_conformidade'] ?: $nc['item_titulo']; ?>
+                        <?php $titulo = $nc['titulo_nao_conformidade'] ?: $nc['item_titulo']; // título salvo na resposta prevalece sobre o do modelo ?>
                         <tr>
                             <td>
                                 <strong><?= e($titulo) ?></strong>

@@ -1,5 +1,16 @@
 <?php 
-$u = usuarioAtual(); 
+/**
+ * Menu de navegação superior (partial).
+ *
+ * Não é acessado diretamente: é incluído via `include 'menu.php'` nas páginas
+ * internas, que já carregaram o config.php e validaram o login.
+ * Fluxo: identifica o usuário logado e seu perfil, marca o link da página
+ * atual como ativo e exibe o item "Usuários" somente para administradores.
+ */
+
+// Perfil do usuário: prioriza o campo 'perfil' retornado por usuarioAtual() e usa
+// $_SESSION['perfil'] como fallback. Apenas 'admin' vê a gestão de usuários.
+$u = usuarioAtual();
 $isAdmin = ($u['perfil'] ?? $_SESSION['perfil'] ?? '') === 'admin';
 
 // Identifica a página atual para aplicar o estilo ativo automaticamente

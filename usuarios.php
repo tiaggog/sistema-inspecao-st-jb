@@ -1,8 +1,21 @@
 <?php
+/**
+ * Gestão de usuários do sistema.
+ *
+ * Acesso: requer login e perfil "admin" (demais perfis recebem "Acesso Negado").
+ *
+ * POST cadastrar_usuario: nome, email, senha, perfil ("filial" | "admin"), unidade
+ * POST excluir_usuario:   id do usuário a remover
+ *
+ * Fluxo: valida o perfil do usuário logado, processa o cadastro (com validação
+ * e senha armazenada em hash) ou a exclusão, e por fim lista todos os usuários
+ * na mesma página, exibindo mensagens de sucesso/erro.
+ */
 require_once 'config.php';
 exigirLogin();
 
-// 🔒 Trava de Segurança: Permite apenas Administradores
+// Trava de segurança: apenas administradores gerenciam usuários.
+// O perfil é lido do usuário da sessão, com fallback para $_SESSION['perfil'].
 $usuarioLogado = usuarioAtual();
 $perfilLogado = $usuarioLogado['perfil'] ?? $_SESSION['perfil'] ?? '';
 
@@ -13,7 +26,7 @@ if ($perfilLogado !== 'admin') {
 $erro = '';
 $sucesso = '';
 
-// Lista de filiais fixas
+// Lista fixa de filiais do Grupo JB (usada no <select> de unidade)
 $filiaisDisponiveis = [
     'FORTALEZA',
     'IMPERATRIZ',
@@ -46,7 +59,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cadastrar_usuario']))
             if ($checkEmail->fetch()) {
                 $erro = 'Este e-mail já está cadastrado no sistema.';
             } else {
-                // Criptografa a senha com segurança
+                // Armazena apenas o hash (bcrypt via PASSWORD_DEFAULT), nunca a senha em texto puro;
+                // a verificação no login é feita com password_verify()
                 $senhaHash = password_hash($senha, PASSWORD_DEFAULT);
 
                 $stmt = $pdo->prepare("INSERT INTO usuarios (nome, email, senha, perfil, unidade) VALUES (?, ?, ?, ?, ?)");
@@ -64,7 +78,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cadastrar_usuario']))
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['excluir_usuario'])) {
     $idExcluir = (int)($_POST['id'] ?? 0);
 
-    // Impede o administrador de excluir a si próprio
+    // Impede o administrador de excluir a si próprio. Validado no servidor, além de
+    // o botão já ficar oculto na listagem, pois o POST pode ser forjado
     if ($idExcluir === (int)$usuarioLogado['id']) {
         $erro = 'Você não pode excluir a sua própria conta logada.';
     } elseif ($idExcluir > 0) {
@@ -73,12 +88,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['excluir_usuario'])) {
             $stmt->execute([$idExcluir]);
             $sucesso = 'Usuário excluído com sucesso.';
         } catch (Exception $e) {
+            // Falha típica: chave estrangeira impedindo apagar usuário com inspeções/registros vinculados
             $erro = 'Erro ao excluir usuário. É possível que ele possua registros vinculados no sistema.';
         }
     }
 }
 
-// 3. Busca a lista de usuários cadastrados
+// 3. Busca a lista de usuários cadastrados (mais recentes primeiro; a coluna senha não é carregada)
 $usuarios = $pdo->query("SELECT id, nome, email, perfil, unidade FROM usuarios ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!doctype html>

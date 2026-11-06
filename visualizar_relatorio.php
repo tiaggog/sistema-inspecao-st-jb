@@ -1,9 +1,25 @@
 <?php
 require_once 'config.php';
+/**
+ * Visualização do relatório de uma inspeção semanal de SST, no layout do
+ * formulário oficial (pronto para impressão / PDF pelo navegador).
+ *
+ * Acesso: requer usuário autenticado (qualquer perfil).
+ *
+ * Parâmetros GET:
+ *   - id : ID da execução de checklist (execucoes_checklist.id)
+ *
+ * Fluxo: carrega a inspeção com dados do modelo de checklist e do usuário;
+ * carrega as respostas na ordem dos itens; resolve os campos de cabeçalho
+ * (com fallback para o formato legado em observacao_geral); renderiza a
+ * tabela C/NC/NA agrupada por seção, com observação e foto das NCs, resumo,
+ * assinaturas e rodapé do documento.
+ */
 exigirLogin();
 
 $id = (int)($_GET['id'] ?? 0);
 
+// --- Cabeçalho da inspeção ---
 $stmt = $pdo->prepare("
     SELECT 
         e.*,
@@ -25,6 +41,8 @@ if (!$rel) {
     die('Relatório não encontrado');
 }
 
+// --- Respostas dos itens ---
+// LEFT JOIN mantém respostas cujo item foi removido do modelo; r.id desempata a ordem.
 $stmt = $pdo->prepare("
     SELECT 
         r.*,
@@ -39,6 +57,14 @@ $stmt = $pdo->prepare("
 $stmt->execute([$id]);
 $resps = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+/**
+ * Extrai o valor de um campo gravado como "Campo: valor" em texto livre
+ * (formato usado por inspeções antigas em observacao_geral).
+ *
+ * @param string|null $texto Texto multilinha de origem.
+ * @param string      $campo Nome do campo, sem os dois-pontos.
+ * @return string Valor encontrado ou string vazia.
+ */
 function extrairInfoObservacao($texto, $campo)
 {
     $linhas = explode("\n", (string)$texto);
@@ -52,11 +78,25 @@ function extrairInfoObservacao($texto, $campo)
     return '';
 }
 
+/**
+ * Símbolo da coluna C/NC/NA: círculo cheio na coluna marcada, vazio nas demais.
+ *
+ * @param string|null $resultado Resultado gravado para o item.
+ * @param string      $tipo      Coluna sendo renderizada (C, NC ou NA).
+ * @return string
+ */
 function marcarResultado($resultado, $tipo)
 {
     return $resultado === $tipo ? '●' : '○';
 }
 
+/**
+ * Define a classe CSS (cor da faixa) da seção a partir do nome do setor.
+ * A comparação por palavra-chave aceita variações com e sem acento.
+ *
+ * @param string|null $setor Nome da seção/setor do checklist.
+ * @return string Classe CSS (sec-org, sec-estrutura, sec-refeitorio ou sec-padrao).
+ */
 function classeSecao($setor)
 {
     $setor = (string)$setor;
@@ -85,6 +125,14 @@ function classeSecao($setor)
     return 'sec-padrao';
 }
 
+/**
+ * Separa um título no padrão "1.2 - Descrição" em número e texto.
+ * Sem o separador, usa a ordem do item como número.
+ *
+ * @param string|null    $titulo
+ * @param int|string     $ordem
+ * @return array{0: string, 1: string} [numero, texto]
+ */
 function separarItem($titulo, $ordem)
 {
     $partes = explode(' - ', (string)$titulo, 2);
@@ -96,7 +144,9 @@ function separarItem($titulo, $ordem)
     return [$ordem, $titulo];
 }
 
-// Leitura com fallback para inspeções criadas antes da mudança de banco de dados
+// --- Campos do cabeçalho ---
+// Leitura com fallback para inspeções criadas antes da mudança de banco de dados:
+// nesses registros os campos estavam como linhas "Campo: valor" em observacao_geral.
 $semanaReferencia = trim($rel['semana_referencia'] ?? '');
 if ($semanaReferencia === '') {
     $semanaReferencia = extrairInfoObservacao($rel['observacao_geral'] ?? '', 'Semana de referência');
@@ -112,11 +162,14 @@ if ($responsavelInspecao === '') {
     $responsavelInspecao = extrairInfoObservacao($rel['observacao_geral'] ?? '', 'Responsável pela inspeção');
 }
 
+// No formato legado, exibe apenas a linha "Observação geral:", descartando
+// os metadados que já foram lidos acima.
 $observacaoGeral = trim($rel['observacao_geral'] ?? '');
 if (stripos($observacaoGeral, 'Observação geral:') !== false) {
     $observacaoGeral = extrairInfoObservacao($observacaoGeral, 'Observação geral');
 }
 
+// Sem responsável informado, assume o usuário que registrou a inspeção.
 if ($responsavelInspecao === '') {
     $responsavelInspecao = $rel['usuario'];
 }
@@ -607,6 +660,7 @@ body{
 
 <?php
 $totalItens = count($resps);
+// --- Totais do resumo: contagem por resultado (C, NC, NA e itens sem marcação) ---
 $totalC = 0;
 $totalNC = 0;
 $totalNA = 0;
@@ -668,6 +722,8 @@ foreach ($resps as $r) {
 
                 <div class="area-box">
                     <?php
+                    // Reproduz as caixas de seleção do formulário impresso; áreas fora
+                    // da lista são gravadas como "OUTRO: descrição".
                     $areas = ['RH', 'RECEPÇÃO', 'ADM', 'TI', 'TORRE'];
                     foreach ($areas as $area):
                         $marcado = strtoupper($areaInspecionada) === strtoupper($area);
@@ -715,6 +771,8 @@ foreach ($resps as $r) {
 
         <tbody>
         <?php
+        // --- Itens agrupados por seção ---
+        // As respostas já vêm ordenadas; uma faixa de seção é emitida sempre que o setor muda.
         $secaoAtual = '';
 
         foreach ($resps as $r):
@@ -738,6 +796,8 @@ foreach ($resps as $r) {
         <?php endif; ?>
 
         <?php
+            // O título salvo na resposta prevalece sobre o do modelo (preserva o texto da época).
+            // Observação e foto só são exibidas para itens NC.
             $titulo = $r['titulo_nao_conformidade'] ?: ($r['item_titulo'] ?? '');
             [$numeroItem, $textoItem] = separarItem($titulo, $r['ordem'] ?? '');
 

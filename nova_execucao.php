@@ -1,5 +1,18 @@
 <?php
 require_once 'config.php';
+/**
+ * Inspeções de SST: histórico, criação e edição de inspeções.
+ *
+ * Acesso: requer login (qualquer perfil).
+ * GET:  id (edita uma inspeção "em_andamento"), checklist_id (inicia nova inspeção),
+ *       data_inicio, data_fim, unidade, area, status (filtros do histórico), salvo (alerta).
+ * POST: salvar_execucao, acao_status (em_andamento|concluido), campos do cabeçalho,
+ *       resultado[item_id] (C/NC/NA), observacao[item_id], foto[item_id] (evidência).
+ * Fluxo: sem checklist selecionado, a página exibe o histórico com filtros e
+ * impressão em lote; com checklist, exibe o formulário de preenchimento. Ao salvar,
+ * grava cabeçalho e respostas em transação. Inspeções concluídas ficam somente
+ * leitura e são redirecionadas para o relatório.
+ */
 exigirLogin();
 
 $u = usuarioAtual();
@@ -41,7 +54,11 @@ if (!$execucaoEdicao) {
     $cid = (int)($_GET['checklist_id'] ?? 0);
 }
 
+// Modelos ativos para o modal "Nova Inspeção"
 $checklists = $pdo->query("SELECT * FROM checklists WHERE ativo=1 ORDER BY nome")->fetchAll();
+
+// Carrega o modelo e seus itens ativos; $check preenchido ativa o modo formulário
+// na view (caso contrário, a página exibe o histórico).
 
 $check = null;
 $itens = [];
@@ -81,6 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $cid && isset($_POST['salvar_execuc
 
     $responsavelInspecao = trim($_POST['responsavel_inspecao'] ?? '');
     $observacaoGeral = trim($_POST['observacao_geral'] ?? '');
+    // Whitelist do status: qualquer valor diferente de 'concluido' vira rascunho
     $statusExecucao = ($_POST['acao_status'] ?? '') === 'concluido' ? 'concluido' : 'em_andamento';
 
     // Validação PHP: Verifica se todos os campos do cabeçalho foram informados
@@ -129,7 +147,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $cid && isset($_POST['salvar_execuc
 
                 $idAtual = $execId;
 
-                // Limpa respostas anteriores para recriar com as edições
+                // Limpa respostas anteriores para recriar com as edições.
+                // Campos preenchidos fora desta tela (ação tomada, recomendação,
+                // grau de risco, foto) foram carregados em $respostasSalvas e são
+                // reaproveitados no INSERT abaixo para não serem perdidos.
                 $sDel = $pdo->prepare("DELETE FROM respostas_checklist WHERE execucao_id = ?");
                 $sDel->execute([$execId]);
             } else {
@@ -154,6 +175,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $cid && isset($_POST['salvar_execuc
                 $idAtual = $pdo->lastInsertId();
             }
 
+            // --- Gravação das respostas item a item ---
             foreach ($itens as $item) {
                 $itemId = $item['id'];
                 $resultado = $_POST['resultado'][$itemId] ?? null;
@@ -162,7 +184,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $cid && isset($_POST['salvar_execuc
                 // Recupera foto existente caso nenhuma nova seja enviada na edição
                 $fotoCaminho = $respostasSalvas[$itemId]['foto'] ?? '';
 
-                // Processa upload de nova foto se enviada
+                // Processa upload de nova foto se enviada. Aceita apenas extensões de
+                // imagem e gera nome único (nc_<execução>_<item>_<uniqid>) para evitar
+                // sobrescrita e não usar o nome original enviado pelo usuário.
                 if (isset($_FILES['foto']['name'][$itemId]) && $_FILES['foto']['error'][$itemId] === UPLOAD_ERR_OK) {
                     $ext = strtolower(pathinfo($_FILES['foto']['name'][$itemId], PATHINFO_EXTENSION));
                     $extPermitidas = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
@@ -176,6 +200,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $cid && isset($_POST['salvar_execuc
                     }
                 }
 
+                // Item NC fica "Pendente" e alimenta o Plano de Ação;
+                // C e NA não exigem tratativa e já nascem "Concluído".
                 if ($resultado === 'NC') {
                     $statusItem = 'Pendente';
                 } elseif ($resultado === 'C' || $resultado === 'NA') {
@@ -184,6 +210,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $cid && isset($_POST['salvar_execuc
                     $statusItem = 'Pendente';
                 }
 
+                // Título, setor e base legal são copiados do item do modelo (snapshot),
+                // preservando o histórico mesmo que o checklist seja alterado depois.
                 $stmt = $pdo->prepare("
                     INSERT INTO respostas_checklist
                     (
@@ -223,6 +251,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $cid && isset($_POST['salvar_execuc
             exit;
 
         } catch (Exception $e) {
+            // Desfaz cabeçalho e respostas para não deixar a inspeção pela metade
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
             }
@@ -238,6 +267,8 @@ $filtroUnidade = $_GET['unidade'] ?? '';
 $filtroArea = $_GET['area'] ?? '';
 $filtroStatus = $_GET['status'] ?? '';
 
+// WHERE montado dinamicamente apenas com os filtros informados; os valores
+// seguem como parâmetros do prepared statement (sem concatenação de entrada).
 $where = [];
 $params = [];
 
@@ -261,7 +292,7 @@ $stmtHist = $pdo->prepare($sqlHistorico);
 $stmtHist->execute($params);
 $historico = $stmtHist->fetchAll(PDO::FETCH_ASSOC);
 
-// Opções únicas para os selects
+// Opções únicas para os selects de filtro, extraídas das inspeções já registradas
 $unidades = $pdo->query("SELECT DISTINCT unidade FROM execucoes_checklist WHERE unidade IS NOT NULL AND unidade <> '' ORDER BY unidade")->fetchAll(PDO::FETCH_COLUMN);
 $areas = $pdo->query("SELECT DISTINCT area_inspecionada FROM execucoes_checklist WHERE area_inspecionada IS NOT NULL AND area_inspecionada <> '' ORDER BY area_inspecionada")->fetchAll(PDO::FETCH_COLUMN);
 ?>
@@ -869,6 +900,8 @@ tr.item-pendente td { background-color: #fee2e2 !important; }
             </div>
 
             <?php
+            // Valores iniciais do cabeçalho: na edição vêm da inspeção salva; numa nova
+            // inspeção, unidade vem do modelo e responsável do usuário logado.
             // Se for edição, busca a data original do início; se for novo, pega HOJE
             $valData = !empty($execucaoEdicao['data_inspecao']) ? $execucaoEdicao['data_inspecao'] : $hoje;
             $valSemana = $execucaoEdicao['semana_referencia'] ?? '';
@@ -904,6 +937,8 @@ tr.item-pendente td { background-color: #fee2e2 !important; }
                         <div class="area-checks">
                             <?php 
                             $opcoesArea = ['RH', 'RECEPÇÃO', 'ADM', 'TI', 'TORRE']; 
+                            // Área fora da lista fixa foi salva como "OUTRO: <texto>"; marca o
+                            // rádio OUTRO e devolve só o texto livre para o campo.
                             $eOutro = $valArea !== '' && !in_array($valArea, $opcoesArea);
                             $valOutroTexto = $eOutro ? str_replace('OUTRO: ', '', $valArea) : '';
                             ?>
@@ -953,6 +988,8 @@ tr.item-pendente td { background-color: #fee2e2 !important; }
 
                 <tbody>
                 <?php
+                // Itens vêm ordenados; uma linha de seção é emitida sempre que o
+                // setor_local muda, com cor definida por palavras-chave do nome.
                 $secaoAtual = '';
 
                 foreach ($itens as $i):
@@ -978,6 +1015,8 @@ tr.item-pendente td { background-color: #fee2e2 !important; }
                 <?php endif; ?>
 
                 <?php
+                    // Títulos no formato "1.2 - Texto" exibem o número próprio;
+                    // sem esse padrão, usa a ordem do item como numeração.
                     $partes = explode(' - ', $i['titulo'], 2);
                     $numeroItem = count($partes) === 2 ? $partes[0] : $i['ordem'];
                     $textoItem = count($partes) === 2 ? $partes[1] : $i['titulo'];

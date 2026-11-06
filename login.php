@@ -1,8 +1,18 @@
 <?php 
+/**
+ * Tela de login do sistema de inspeções de SST.
+ *
+ * Acesso: público (não exige login).
+ * POST: email, senha (o checkbox "lembrar" é enviado, mas não é tratado no servidor).
+ * Fluxo: busca o usuário pelo e-mail, valida a senha com password_verify()
+ * contra o hash armazenado e, em caso de sucesso, guarda o registro do usuário
+ * na sessão e redireciona para a tela de inspeções (nova_execucao.php).
+ */
 require_once 'config.php';
 
 $erro = '';
 
+// --- Autenticação (POST) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = trim($_POST['email'] ?? '');
     $senha = $_POST['senha'] ?? '';
@@ -11,12 +21,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stmt->execute([$email]);
     $u = $stmt->fetch();
 
+    // Senhas são armazenadas como hash (password_hash); nunca comparar em texto puro.
     if ($u && password_verify($senha, $u['senha'])) {
         $_SESSION['usuario'] = $u;
         header('Location: nova_execucao.php'); 
         exit;
     }
 
+    // Mensagem genérica de propósito: não revela se o e-mail existe na base.
     $erro = 'E-mail ou senha inválidos.';
 }
 ?>

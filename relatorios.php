@@ -1,4 +1,17 @@
 <?php
+/**
+ * Relatórios de Inspeções — listagem dos checklists concluídos.
+ *
+ * Acesso: requer login (qualquer perfil).
+ *
+ * Parâmetros GET (filtros opcionais):
+ *   - data_inicio / data_fim : intervalo da data da inspeção (Y-m-d)
+ *   - unidade / area         : unidade e área inspecionada
+ *
+ * Fluxo: aplica os filtros sobre as execuções com status 'concluido', lista os
+ * resultados com link para visualizar_relatorio.php e permite selecionar várias
+ * inspeções para impressão em lote (imprimir_multiplos_relatorios.php?ids[]=...).
+ */
 require_once 'config.php';
 exigirLogin();
 
@@ -9,6 +22,8 @@ $filtroUnidade = $_GET['unidade'] ?? '';
 $filtroArea = $_GET['area'] ?? '';
 
 // 2. Monta as condições WHERE do SQL (Garantindo apenas concluídos)
+// Inspeções ainda não finalizadas não aparecem nesta lista. Os filtros usam
+// placeholders (?) para evitar SQL injection.
 $where = ["e.status = 'concluido'"];
 $params = [];
 
@@ -35,6 +50,7 @@ if ($filtroArea !== '') {
 $whereSql = "WHERE " . implode(" AND ", $where);
 
 // 3. Executa a busca das inspeções concluídas
+// JOIN com usuarios traz o nome de quem executou a inspeção (coluna "Responsável").
 $sql = "
     SELECT e.*, c.nome AS checklist_nome, u.nome AS usuario 
     FROM execucoes_checklist e 
@@ -49,6 +65,7 @@ $stmt->execute($params);
 $lista = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // 4. Busca opções únicas para preencher os selects dos filtros
+// Considera apenas inspeções concluídas, para não oferecer opções sem resultado.
 $unidades = $pdo->query("
     SELECT DISTINCT unidade 
     FROM execucoes_checklist 

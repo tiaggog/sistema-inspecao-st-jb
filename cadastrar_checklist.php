@@ -1,8 +1,20 @@
 <?php
+/**
+ * Cadastro de um novo modelo de checklist de inspeção.
+ *
+ * Acesso: requer login (qualquer perfil).
+ *
+ * POST: nome, unidade, codigo_documento, data_aprovacao (obrigatórios) e
+ *       introducao (opcional, texto de apresentação exibido no relatório).
+ *
+ * Fluxo: exibe o formulário; no envio, valida os campos obrigatórios, grava o
+ * modelo em `checklists` e redireciona para checklists.php. Os itens do modelo
+ * são cadastrados depois, em itens_checklist.php.
+ */
 require_once 'config.php';
 exigirLogin();
 
-// Lista de filiais padrão
+// Lista fixa de filiais do Grupo JB (mesma usada em usuarios.php)
 $filiaisDisponiveis = [
     'FORTALEZA',
     'IMPERATRIZ',
@@ -13,13 +25,16 @@ $filiaisDisponiveis = [
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Converte o nome para CAIXA ALTA (maiusculo) no backend
+    // Padroniza o nome em CAIXA ALTA no backend (o CSS só altera a exibição no campo).
+    // mb_strtoupper com UTF-8 garante a conversão correta de acentos (ex.: "inspeção" -> "INSPEÇÃO")
     $nome = mb_strtoupper(trim($_POST['nome'] ?? ''), 'UTF-8');
     $unidade = trim($_POST['unidade'] ?? '');
     $codigoDocumento = trim($_POST['codigo_documento'] ?? '');
     $dataAprovacao = trim($_POST['data_aprovacao'] ?? '');
     $introducao = trim($_POST['introducao'] ?? '');
 
+    // Código do documento e data de aprovação vêm do Setor de Projetos (controle documental).
+    // Se faltar algum obrigatório, o formulário é apenas exibido novamente.
     if (!empty($nome) && !empty($unidade) && !empty($codigoDocumento) && !empty($dataAprovacao)) {
         $stmt = $pdo->prepare('INSERT INTO checklists (nome, unidade, codigo_documento, data_aprovacao, introducao) VALUES (?, ?, ?, ?, ?)');
         $stmt->execute([
@@ -30,6 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $introducao
         ]);
         
+        // Padrão Post/Redirect/Get: evita reenvio do formulário ao atualizar a página
         header('Location: checklists.php');
         exit;
     }

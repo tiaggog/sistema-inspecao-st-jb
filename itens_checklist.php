@@ -1,4 +1,18 @@
 <?php 
+/**
+ * Gerenciamento dos itens (quesitos) de um modelo de checklist.
+ *
+ * Acesso: requer login (qualquer perfil).
+ *
+ * GET  id:      id do checklist (obrigatório)
+ * GET  editar:  id do item a carregar no formulário para edição (opcional)
+ * POST item_id (0 = novo item), titulo, setor_local, ordem
+ *
+ * Fluxo: carrega o checklist pai, opcionalmente o item em edição, processa a
+ * inserção/atualização e redireciona (Post/Redirect/Get); por fim lista os
+ * itens ordenados pelo campo "ordem". Cada item é avaliado como C/NC/NA
+ * nas inspeções.
+ */
 require_once 'config.php'; 
 exigirLogin();
 
@@ -18,6 +32,7 @@ $editId = (int)($_GET['editar'] ?? 0);
 $itemEdit = null;
 
 if ($editId > 0) {
+    // Filtra também por checklist_id: impede carregar um item de outro checklist via URL
     $stmtEdit = $pdo->prepare('SELECT * FROM checklist_itens WHERE id=? AND checklist_id=?');
     $stmtEdit->execute([$editId, $id]);
     $itemEdit = $stmtEdit->fetch();
@@ -28,11 +43,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $itemId = (int)($_POST['item_id'] ?? 0);
     $titulo = trim($_POST['titulo'] ?? '');
     $setorLocal = trim($_POST['setor_local'] ?? '');
+    // Observação: o formulário atual não envia "base_legal", portanto o campo é gravado vazio
     $baseLegal = trim($_POST['base_legal'] ?? '');
     $ordem = (int)($_POST['ordem'] ?? 1);
 
     if ($itemId > 0) {
-        // Atualiza item existente
+        // Atualiza item existente (restrito ao checklist atual, mesma proteção da edição)
         $stmt = $pdo->prepare('UPDATE checklist_itens SET titulo=?, setor_local=?, base_legal=?, ordem=? WHERE id=? AND checklist_id=?');
         $stmt->execute([$titulo, $setorLocal, $baseLegal, $ordem, $itemId, $id]);
     } else {
@@ -41,11 +57,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute([$id, $titulo, $setorLocal, $baseLegal, $ordem]);
     }
 
+    // Post/Redirect/Get: volta à listagem e evita reenvio ao atualizar a página
     header('Location: itens_checklist.php?id=' . $id); 
     exit;
 }
 
-// Busca todos os itens do checklist
+// Busca todos os itens do checklist (id como desempate quando a ordem se repete)
 $itens = $pdo->prepare('SELECT * FROM checklist_itens WHERE checklist_id=? ORDER BY ordem, id');
 $itens->execute([$id]);
 $itens = $itens->fetchAll();

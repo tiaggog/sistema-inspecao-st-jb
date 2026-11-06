@@ -1,7 +1,32 @@
 <?php
 require_once 'config.php';
+/**
+ * Dashboard de indicadores das inspeções de SST.
+ *
+ * Acesso: requer usuário autenticado (qualquer perfil).
+ *
+ * Parâmetros GET (todos opcionais):
+ *   - data_inicio / data_fim : intervalo da data de inspeção (Y-m-d)
+ *   - unidade                : filial/unidade inspecionada
+ *   - area                   : área inspecionada
+ *   - resultado              : C, NC, NA ou SEM (itens sem marcação)
+ *
+ * Fluxo: monta a consulta das respostas com os filtros de data, unidade e
+ * resultado; resolve a área de cada inspeção (coluna ou texto legado) e aplica
+ * o filtro de área em PHP; consolida contagens por filial, área e grupo do
+ * checklist; renderiza cards, tabelas de resumo e os 100 itens mais recentes.
+ */
 exigirLogin();
 
+/**
+ * Extrai o valor de um campo gravado como "Campo: valor" em texto livre.
+ * Usado para ler dados de inspeções antigas, que guardavam metadados
+ * (ex.: área inspecionada) dentro de observacao_geral.
+ *
+ * @param string|null $texto Texto multilinha de origem.
+ * @param string      $campo Nome do campo, sem os dois-pontos.
+ * @return string Valor encontrado ou string vazia.
+ */
 function extrairCampoObs($texto, $campo)
 {
     $linhas = explode("\n", (string)$texto);
@@ -15,6 +40,13 @@ function extrairCampoObs($texto, $campo)
     return '';
 }
 
+/**
+ * Calcula o percentual com uma casa decimal, protegido contra divisão por zero.
+ *
+ * @param int $parte
+ * @param int $total
+ * @return float|int
+ */
 function percentual($parte, $total)
 {
     if ($total <= 0) {
@@ -24,6 +56,12 @@ function percentual($parte, $total)
     return round(($parte / $total) * 100, 1);
 }
 
+/**
+ * Retorna o HTML do badge colorido correspondente ao resultado do item.
+ *
+ * @param string|null $resultado C, NC, NA ou vazio/null (sem marcação).
+ * @return string
+ */
 function badgeResultado($resultado)
 {
     if ($resultado === 'C') {
@@ -41,12 +79,15 @@ function badgeResultado($resultado)
     return '<span class="badge badge-sem">Sem marcação</span>';
 }
 
+// --- Filtros ---
 $dataInicio = $_GET['data_inicio'] ?? '';
 $dataFim = $_GET['data_fim'] ?? '';
 $filtroUnidade = $_GET['unidade'] ?? '';
 $filtroArea = $_GET['area'] ?? '';
 $filtroResultado = $_GET['resultado'] ?? '';
 
+// Monta o WHERE com placeholders. O filtro de área não entra aqui porque
+// a área pode estar apenas no texto legado de observacao_geral (ver abaixo).
 $where = [];
 $params = [];
 
@@ -67,6 +108,7 @@ if ($filtroUnidade !== '') {
 
 if ($filtroResultado !== '') {
     if ($filtroResultado === 'SEM') {
+        // "SEM" representa itens ainda não marcados (resultado nulo ou vazio).
         $where[] = "(r.resultado IS NULL OR r.resultado = '')";
     } else {
         $where[] = "r.resultado = ?";
@@ -80,6 +122,8 @@ if (!empty($where)) {
     $whereSql = 'WHERE ' . implode(' AND ', $where);
 }
 
+// --- Consulta principal: uma linha por resposta de item de checklist ---
+// LEFT JOIN em checklist_itens preserva respostas cujo item foi removido do modelo.
 $sql = "
     SELECT 
         e.id AS execucao_id,
@@ -107,6 +151,10 @@ $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $dadosBrutos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// --- Resolução da área e filtro por área ---
+// A área vem de e.area_inspecionada; registros antigos não têm essa coluna
+// preenchida e guardam a informação como "Área inspecionada: ..." em
+// observacao_geral. Por isso o filtro de área é aplicado aqui, em PHP.
 $dados = [];
 
 foreach ($dadosBrutos as $linha) {
@@ -128,6 +176,7 @@ foreach ($dadosBrutos as $linha) {
     $dados[] = $linha;
 }
 
+// --- Opções dos selects de filtro ---
 $unidades = $pdo->query("
     SELECT DISTINCT unidade 
     FROM execucoes_checklist 
@@ -135,6 +184,8 @@ $unidades = $pdo->query("
     ORDER BY unidade
 ")->fetchAll(PDO::FETCH_COLUMN);
 
+// Áreas combinam a coluna atual e o formato legado; a chave do array
+// funciona como deduplicação entre as duas fontes.
 $areasDisponiveis = [];
 
 $areasColuna = $pdo->query("
@@ -163,6 +214,9 @@ foreach ($obsAreas as $obs) {
 
 ksort($areasDisponiveis);
 
+// --- Consolidação por filial, área e grupo ---
+// $totalInspecoesIds usa o id como chave para contar inspeções distintas,
+// já que cada inspeção aparece em várias linhas (uma por item).
 $totalInspecoesIds = [];
 $totalItens = 0;
 $totalC = 0;
@@ -187,6 +241,7 @@ foreach ($dados as $linha) {
 
     $area = $linha['area_inspecionada'];
 
+    // Grupo: setor gravado na resposta tem prioridade sobre o setor do item do modelo.
     $grupo = trim($linha['setor_local'] ?? '');
 
     if ($grupo === '') {
@@ -203,6 +258,8 @@ foreach ($dados as $linha) {
         $titulo = trim($linha['item_titulo'] ?? '');
     }
 
+    // Títulos seguem o padrão "1.2 - Descrição"; sem esse separador,
+    // usa a ordem do item como número.
     $partes = explode(' - ', $titulo, 2);
 
     if (count($partes) === 2) {
@@ -248,6 +305,7 @@ foreach ($dados as $linha) {
         ];
     }
 
+    // Qualquer valor diferente de C/NC/NA é contabilizado como "sem marcação".
     $porUnidade[$unidade]['total']++;
     $porArea[$area]['total']++;
     $porGrupo[$grupo]['total']++;
@@ -287,6 +345,7 @@ foreach ($dados as $linha) {
     ];
 }
 
+// --- Indicadores gerais e ordenação dos resumos (maior volume primeiro) ---
 $totalInspecoes = count($totalInspecoesIds);
 
 $percC = percentual($totalC, $totalItens);
@@ -306,6 +365,8 @@ uasort($porGrupo, function($a, $b) {
     return $b['total'] <=> $a['total'];
 });
 
+// A tabela detalhada exibe só os 100 itens mais recentes (a consulta já vem
+// ordenada por data desc); os totais acima consideram todos os registros.
 $linhasTabela = array_slice($linhasTabela, 0, 100);
 ?>
 <!doctype html>

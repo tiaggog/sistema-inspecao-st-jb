@@ -1,10 +1,23 @@
 <?php
+/**
+ * Listagem dos modelos de checklist de inspeção.
+ *
+ * Acesso: requer login (qualquer perfil).
+ *
+ * POST excluir_checklist: id do modelo a remover
+ *
+ * Fluxo: processa a exclusão (somente de modelos sem inspeções registradas) e
+ * lista todos os modelos com atalhos para gerenciar itens (itens_checklist.php),
+ * iniciar uma inspeção (nova_execucao.php) ou excluir.
+ */
 require_once 'config.php';
 exigirLogin();
 
 $erro = '';
 $sucesso = '';
 
+// Exclusão de modelo: bloqueada se já houver execuções vinculadas,
+// para não perder o histórico de inspeções e relatórios já emitidos
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['excluir_checklist'])) {
     $idExcluir = (int)($_POST['id'] ?? 0);
 
@@ -28,6 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['excluir_checklist']))
     }
 }
 
+// Todos os modelos, do mais recente para o mais antigo
 $lista = $pdo->query("SELECT * FROM checklists ORDER BY id DESC")->fetchAll();
 ?>
 <!doctype html>

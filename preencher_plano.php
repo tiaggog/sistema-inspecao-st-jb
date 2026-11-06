@@ -1,7 +1,23 @@
 <?php
+/**
+ * Preenchimento do Plano de Ação de uma inspeção.
+ *
+ * Acesso: requer login. Administradores editam enquanto o plano não estiver
+ * 100% concluído; demais perfis (ou plano concluído) abrem em modo somente leitura.
+ *
+ * Parâmetros:
+ *   - GET  id                   : ID da execução (inspeção); inválido redireciona para planos_acao.php
+ *   - POST salvar_plano         : dispara o salvamento
+ *   - POST acao_tomada[id], status_nc[id], grau_risco[id],
+ *          responsavel_acao[id], prazo_conclusao[id] : campos por resposta NC (indexados pelo ID da resposta)
+ *
+ * Fluxo: carrega a inspeção e suas NCs, calcula o progresso e a permissão de
+ * edição; no POST atualiza cada NC e redireciona para a listagem com ?salvo=1.
+ */
 require_once 'config.php';
 exigirLogin();
 
+// --- Usuário e permissões ---
 $usuarioLogado = usuarioAtual();
 $isAdmin = ($usuarioLogado['perfil'] ?? $_SESSION['perfil'] ?? '') === 'admin';
 
@@ -28,6 +44,7 @@ if (!$inspecao) {
 }
 
 // Busca apenas os itens marcados como NC
+// Usa o título do item do modelo como fallback quando a NC não tem título próprio.
 $stmtNC = $pdo->prepare("
     SELECT r.*, i.ordem, i.titulo AS item_titulo, i.setor_local AS item_setor
     FROM respostas_checklist r
@@ -39,6 +56,8 @@ $stmtNC->execute([$execId]);
 $itensNC = $stmtNC->fetchAll(PDO::FETCH_ASSOC);
 
 // Cálculo de Progresso Geral do Plano (CONSIDERA APENAS STATUS CONCLUÍDO)
+// Percentual = NCs concluídas / total de NCs, mesma regra da listagem em planos_acao.php.
+// As duas grafias de "Concluído" cobrem registros gravados sem acento.
 $totalNC = count($itensNC);
 $concluidas = 0;
 foreach ($itensNC as $nc) {
@@ -52,12 +71,17 @@ $porcentagemGeral = $totalNC > 0 ? round(($concluidas / $totalNC) * 100) : 0;
 // REGRA: Só permite editar se for ADMIN e se a tratativa ainda NÃO estiver 100% concluída
 $podeEditar = $isAdmin && $porcentagemGeral < 100;
 
+// --- Salvamento do plano (POST) ---
 // Trava no servidor: impede salvar em modo de visualização ou caso o plano já esteja 100% tratado
+// (os campos "disabled" no formulário não bastam, pois o POST pode ser forjado).
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['salvar_plano'])) {
     if (!$podeEditar) {
         die('Acesso negado: este plano de ação está em modo de visualização ou já foi 100% concluído.');
     }
 
+    // Itera sobre as NCs carregadas do banco (e não sobre os IDs do POST), garantindo
+    // que só respostas desta inspeção sejam alteradas. Campo ausente no POST mantém
+    // o valor atual; prazo vazio é gravado como NULL.
     foreach ($itensNC as $nc) {
         $respId = $nc['id'];
 
@@ -67,6 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['salvar_plano'])) {
         $responsavel = isset($_POST['responsavel_acao'][$respId]) ? trim($_POST['responsavel_acao'][$respId]) : $nc['responsavel_acao'];
         $prazo = !empty($_POST['prazo_conclusao'][$respId]) ? $_POST['prazo_conclusao'][$respId] : null;
 
+        // O filtro por execucao_id reforça que a resposta pertence à inspeção aberta.
         $uStmt = $pdo->prepare("
             UPDATE respostas_checklist 
             SET acao_tomada = ?, grau_risco = ?, responsavel_acao = ?, prazo_conclusao = ?, status = ?
@@ -264,6 +289,7 @@ body { margin: 0; background: #f8fafc; color: #1e293b; font-family: Arial, Helve
     <form method="post">
         <?php foreach ($itensNC as $index => $nc): ?>
             <?php 
+                // Campos são nomeados como array indexado pelo ID da resposta (ex.: acao_tomada[15]).
                 $titulo = $nc['titulo_nao_conformidade'] ?: $nc['item_titulo'];
                 $idNc = $nc['id'];
                 $statusAtual = $nc['status'] ?? 'Pendente';

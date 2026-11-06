@@ -1,7 +1,24 @@
 <?php
+/**
+ * Planos de Ação — listagem das inspeções que possuem Não Conformidades (NC).
+ *
+ * Acesso: requer login. Todos os perfis visualizam; somente administradores
+ * podem preencher/editar planos que ainda não estejam 100% tratados.
+ *
+ * Parâmetros GET (filtros opcionais):
+ *   - data_inicio / data_fim : intervalo da data da inspeção (Y-m-d)
+ *   - unidade / area         : unidade e área inspecionada
+ *   - status                 : 'ABERTO' (há NC não concluída) ou 'TRATADO' (todas concluídas)
+ *   - salvo                  : exibe o alerta de sucesso após redirecionamento de preencher_plano.php
+ *
+ * Fluxo: monta a consulta agrupando as respostas NC por inspeção, calcula o
+ * progresso de cada plano (NCs concluídas / total de NCs) e lista os resultados
+ * com atalhos para preencher o plano, imprimir individualmente ou em lote.
+ */
 require_once 'config.php';
 exigirLogin();
 
+// --- Usuário e permissões ---
 $usuarioLogado = usuarioAtual();
 $isAdmin = ($usuarioLogado['perfil'] ?? $_SESSION['perfil'] ?? '') === 'admin';
 
@@ -13,6 +30,9 @@ $filtroArea = $_GET['area'] ?? '';
 $filtroStatus = $_GET['status'] ?? '';
 
 // 2. Monta as condições WHERE do SQL
+// A condição fixa restringe o JOIN às respostas NC: só aparecem inspeções
+// com ao menos uma não conformidade, e as contagens abaixo consideram apenas NCs.
+// Os filtros usam placeholders (?) para evitar SQL injection.
 $where = ["r.resultado = 'NC'"];
 $params = [];
 
@@ -39,6 +59,9 @@ if ($filtroArea !== '') {
 $whereSql = "WHERE " . implode(" AND ", $where);
 
 // 3. Filtro HAVING para o Status do Plano
+// O status é derivado dos itens (não há coluna própria), por isso o filtro é
+// aplicado após o GROUP BY: "TRATADO" = todas as NCs concluídas; "ABERTO" = ao
+// menos uma pendente. As duas grafias de "Concluído" cobrem registros sem acento.
 $having = [];
 if ($filtroStatus === 'TRATADO') {
     $having[] = "COUNT(r.id) = SUM(CASE WHEN r.status IN ('Concluído', 'Concluido') THEN 1 ELSE 0 END)";
@@ -49,6 +72,10 @@ if ($filtroStatus === 'TRATADO') {
 $havingSql = !empty($having) ? "HAVING " . implode(" AND ", $having) : "";
 
 // 4. Busca as inspeções
+// Uma linha por inspeção com: total de NCs, NCs concluídas (base do percentual)
+// e itens já preenchidos (ação informada ou status diferente de "Pendente"),
+// usado apenas para decidir o rótulo do botão "Preencher" x "Editar".
+// LEFT JOIN em checklists mantém a inspeção mesmo se o modelo foi excluído.
 $sql = "
     SELECT 
         e.id AS id,
@@ -74,6 +101,7 @@ $stmt->execute($params);
 $inspecoesNC = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // 5. Opções dos Filtros
+// Lista apenas unidades/áreas que possuem NC, evitando opções que retornariam vazio.
 $unidades = $pdo->query("
     SELECT DISTINCT e.unidade 
     FROM execucoes_checklist e
@@ -379,11 +407,15 @@ body { margin: 0; background: #f8fafc; color: #1e293b; font-family: Arial, Helve
                 <tbody>
                     <?php foreach ($inspecoesNC as $i): ?>
                         <?php 
+                            // Progresso do plano: NCs com status "Concluído" sobre o total de NCs
+                            // da inspeção. Status intermediários (Em andamento, Aguardando aprovação)
+                            // não contam como resolvidos.
                             $totalNC = (int)$i['total_nc'];
                             $concluidas = (int)$i['nc_concluidas'];
                             $itensPreenchidos = (int)$i['itens_preenchidos'];
                             $porcentagem = $totalNC > 0 ? round(($concluidas / $totalNC) * 100) : 0;
                             
+                            // Cor da barra por faixa: até 35% vermelho, até 70% laranja, acima verde.
                             if ($porcentagem <= 35) {
                                 $corBarra = '#dc2626';
                             } elseif ($porcentagem <= 70) {
@@ -392,6 +424,8 @@ body { margin: 0; background: #f8fafc; color: #1e293b; font-family: Arial, Helve
                                 $corBarra = '#16a34a';
                             }
 
+                            // Mesma regra aplicada em preencher_plano.php: plano 100% tratado fica
+                            // somente leitura, inclusive para administradores.
                             $podeEditarEstaInspecao = $isAdmin && $porcentagem < 100;
 
                             if ($podeEditarEstaInspecao) {
